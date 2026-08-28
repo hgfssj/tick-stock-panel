@@ -535,9 +535,11 @@ function HotRankCard({ title, rank, configUrl, onStockClick }: {
   )
 }
 
+const _todayStr = new Date().toISOString().slice(0, 10)
+
 export function Dashboard() {
   const qc = useQueryClient()
-  const [selectedDate, setSelectedDate] = useState<string | undefined>()
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(_todayStr)
   const [manualFetching, setManualFetching] = useState(false)
   const [previewStock, setPreviewStock] = useState<{symbol: string; name?: string; alert?: AlertEvent} | null>(null)
   // 首次使用(无数据 + 未完成引导)自动弹窗: 同一会话只弹一次
@@ -664,9 +666,10 @@ export function Dashboard() {
   const score = data.emotion?.score ?? 50
   const strongUp = data.breadth.strong_up ?? 0
   const strongDown = data.breadth.strong_down ?? 0
-  const latestDate = dataStatus.data?.enriched?.latest_date ?? null
+  const todayStr = new Date().toISOString().slice(0, 10)
   const currentDate = selectedDate ?? data.as_of ?? ''
-  const quoteRunning = (!selectedDate || selectedDate === latestDate) && data.quote_status?.running
+  const isTodaySelected = selectedDate === todayStr
+  const quoteRunning = isTodaySelected && data.quote_status?.is_trading_hours && data.quote_status?.running
   // 实时模式: none / watchlist / full_market。
   // watchlist 模式仅自选 ≤5 只实时, 看板呈现的大盘数据实为盘后快照, 需提示避免误读。
   const quoteMode = data.quote_status?.mode as ('none' | 'watchlist' | 'full_market') | undefined
@@ -722,7 +725,7 @@ export function Dashboard() {
               value={currentDate}
               onChange={setSelectedDate}
               min={dataStatus.data?.enriched?.earliest_date ?? undefined}
-              max={latestDate ?? undefined}
+              max={todayStr}
               className="w-32"
             />
           ) : (

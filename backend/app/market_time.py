@@ -77,3 +77,16 @@ def trading_minutes_elapsed_from_ts(ts_ms: int | float | None) -> float:
         return float(_TRADING_TOTAL_MINUTES)
     return trading_minutes_elapsed_from_dt(dt)
 
+
+def is_continuous_trading() -> bool:
+    """A股是否处于连续竞价时段 (9:30-11:30 / 13:00-15:00, 仅工作日)。
+
+    比 polling_window 严格: 排除 9:15-9:30 集合竞价(指示价, 非成交价)、
+    午间休市与 15:00 后收盘缓冲。看板"实时"标识应基于此判断。
+    """
+    now = cn_now()
+    t = now.time()
+    morning = _MORNING_START <= t <= _MORNING_END
+    afternoon = _AFTERNOON_START <= t <= _AFTERNOON_END
+    return now.weekday() < 5 and (morning or afternoon)
+
