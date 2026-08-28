@@ -1,0 +1,14 @@
+# 东方财富免费行情数据源插件 (纯 HTTP 直连, 复用后端已有 httpx, 零新增依赖)
+# ⚠️ 合规提示: 本插件直连东方财富公开行情/财务网页接口, 未经对方授权,
+#    可能违反其服务条款并涉及交易所行情版权问题; 接口无 SLA, 可能随时变更。
+#    启用即视为使用者知悉并自行承担合规责任。
+# 数据限制: 分钟K仅覆盖最近约 5 个交易日; F10 财务历史仅约最近 9 个报告期(约2年)。
+
+name: eastmoney
+display_name: "东方财富 (免费)"
+runtime: none
+entry: app.plugins.eastmoney.provider:EastMoneyProvider
+check: app.plugins.eastmoney.provider:availability
+datasets: [daily, adj_factor, minute, realtime, financial]
+description: "直连东方财富公开接口: 日K(全历史)/复权因子/分钟K(近5日)/全市场实时快照/F10财务(指标、利润表、资产负债表、现金流、股本)。无需 API Key。存在服务条款与接口变更风险, 使用需自行评估合规责任。"
+install_hint: "无需安装。在「设置 → 数据源」把日K/除权/分钟/实时/财务切换到 eastmoney 即生效。"
