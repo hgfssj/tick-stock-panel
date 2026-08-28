@@ -246,29 +246,3 @@ PORT=3018                      # 服务端口
 fork同时请点个star哦,欢迎 Issue 和 PR。
 
 ---
-
-## 💬 交流群
-
-欢迎加入交流群,讨论交流。
-
-<img src="./community-qr-code.jpg" alt="交流群二维码" width="240" />
-
----
-
-## ⚠️ 免责声明
-
-本项目仅供**学习与量化研究**,**不构成任何投资建议**。回测结果不代表未来收益。A 股有风险,入市需谨慎。数据准确性以数据源 TickFlow 官方为准。
-
-## 📄 License
-
-[MIT](./LICENSE) © tick-stock-panel contributors 
-
-本项目依赖 [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 提供数据服务,使用前请遵守其服务条款
-
-数据源插件 [stock-sdk](https://stock-sdk.linkdiary.cn) 遵循其各自的 ISC 协议。
-
-## 社区
-
-本开源项目已链接并认可 [LINUX DO 社区](https://linux.do)。
-
-本开源项目由 [智谱 GLM 大模型](https://open.bigmodel.cn/) 辅助构建,感谢 [智谱 AI 开放平台](https://open.bigmodel.cn/) 提供支持。
