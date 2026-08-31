@@ -103,6 +103,14 @@ _SNAPSHOT_URLS = (
     "https://push2delay.eastmoney.com/api/qt/clist/get",
 )
 _DELAY_HOST_IDX = 1
+# 多标的实时快照(指数等非股票类), 同样主/延时双源。
+_ULIST_URLS = (
+    "https://push2.eastmoney.com/api/qt/ulist.np/get",
+    "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+)
+_ULIST_DELAY_IDX = 1
+# 硬封锁不拦截的降级源集合(风控按域名, 主源被封时延时源通常健康)。
+_DELAY_HOST_URLS = (_SNAPSHOT_URLS[_DELAY_HOST_IDX], _ULIST_URLS[_ULIST_DELAY_IDX])
 _F10_BASE = "https://emweb.securities.eastmoney.com/PC_HSF10/"
 
 # K线 fields2: f51..f61 = date,open,close,high,low,volume,amount,振幅,涨跌幅,涨跌额,换手率
@@ -179,18 +187,22 @@ class EastMoneyClient:
         self._f10_cache = f10_cache if f10_cache is not None else {}
         # 当前一轮快照成功使用的域名索引(0=实时, 1=延时), 轮内记忆避免每页重试主域名
         self._snapshot_host_idx = 0
+        self._ulist_host_idx = 0
 
     def close(self) -> None:
         self._client.close()
 
     # ---- 底层请求 ----
-    def _get_json(self, url: str, params: dict) -> dict:
+    def _get_json(self, url: str, params: dict, *, fail_fast_on_conn: bool = False) -> dict:
         last_err: Exception | None = None
         plain_fails = 0
         cooldown_rounds = 0
         while True:
+            # 硬封锁期直接跳过请求 —— 唯一例外: 降级源(push2delay)。
+            # 风控按域名而非按 IP: 主源被封时降级源往往健康; 若把降级源一并
+            # 封锁, 降级路径形同虚设 (2026-08-31: push2 拒连而 push2delay 200)。
             blocked = _hard_block_remaining()
-            if blocked > 0:
+            if blocked > 0 and not (fail_fast_on_conn and url in _DELAY_HOST_URLS):
                 raise EastMoneyError(
                     f"eastmoney IP 硬封锁中({int(blocked)}s 后恢复), 本轮直接跳过"
                 )
@@ -213,8 +225,13 @@ class EastMoneyClient:
                         cooldown_rounds += 1
                         if cooldown_rounds > _MAX_COOLDOWN_ROUNDS:
                             _enter_hard_block()
+                        if fail_fast_on_conn:
                             break
                         continue
+                    # fail_fast: 单源断连立即返回失败, 让快照多源轮换直接切到
+                    # 备用源; 若在死源上走完冷却阶梯, 备用源永远轮不到。
+                    if fail_fast_on_conn:
+                        break
                     time.sleep(1.0)  # 未达阈值: 短退避后重试
                     continue
                 # 普通 HTTP 错误: 指数退避重试(最多 3 次)
@@ -275,7 +292,7 @@ class EastMoneyClient:
         for step in range(n):
             idx = (self._snapshot_host_idx + step) % n
             try:
-                payload = self._get_json(_SNAPSHOT_URLS[idx], params)
+                payload = self._get_json(_SNAPSHOT_URLS[idx], params, fail_fast_on_conn=True)
                 self._snapshot_host_idx = idx
                 return payload.get("data") or {}
             except EastMoneyError as e:
@@ -299,6 +316,30 @@ class EastMoneyClient:
             page = self.snapshot_page(pn, page_size)
             rows.extend(page.get("diff") or [])
         return rows, self._snapshot_host_idx == _DELAY_HOST_IDX
+
+    def index_snapshot(self, symbols: list[str]) -> tuple[list[dict], bool]:
+        """多标的实时快照(指数等非股票类)。返回 (rows, delayed)。
+
+        ulist 单请求覆盖指定 secids, 主源被风控时同样降级到 push2delay;
+        f12 仅含 6 位代码, 调用方需自行回填交易所后缀(指数代码无法用
+        code_to_exchange 推断, 如 000001 是上证指数而非深市股票)。
+        """
+        self._ulist_host_idx = 0  # 每轮从主源开始
+        secids = [symbol_to_secid(s) for s in symbols]
+        params = {"secids": ",".join(secids), "fields": _SNAPSHOT_FIELDS, "fltt": "2", "invt": "2"}
+        last_err: Exception | None = None
+        n = len(_ULIST_URLS)
+        for step in range(n):
+            idx = (self._ulist_host_idx + step) % n
+            try:
+                payload = self._get_json(_ULIST_URLS[idx], params, fail_fast_on_conn=True)
+                self._ulist_host_idx = idx
+                data = payload.get("data") or {}
+                return list(data.get("diff") or []), idx == _ULIST_DELAY_IDX
+            except EastMoneyError as e:
+                last_err = e
+                logger.warning("eastmoney ulist host[%d] failed: %s", idx, e)
+        raise EastMoneyError(f"all ulist hosts failed: {last_err}") from last_err
 
     # ---- F10 财务 ----
     def f10(self, path: str, params: dict) -> dict:

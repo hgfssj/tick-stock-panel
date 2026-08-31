@@ -280,6 +280,80 @@ def test_realtime_delayed_session(monkeypatch) -> None:
     assert all(r["session"] == "delayed" for r in records)
 
 
+# ---------- realtime + 指数快照 (ulist 多标的) ----------
+
+def _index_snapshot_rows() -> list[dict]:
+    return [
+        {"f12": "000001", "f14": "上证指数", "f2": 3986.3, "f3": 0.86, "f4": 34.12,
+         "f5": 576656606, "f6": 1.014e12, "f7": 1.51, "f8": None,
+         "f15": 3986.3, "f16": 3926.5, "f17": 3926.53, "f18": 3952.18},
+    ]
+
+
+def test_realtime_with_index_symbols(monkeypatch) -> None:
+    """指数记录并入实时行情, symbol 从请求列表回填(000001 是上证指数而非深市股票)。"""
+    monkeypatch.setattr(
+        em_client.EastMoneyClient, "snapshot_all", lambda self: (_snapshot_rows(), False)
+    )
+    monkeypatch.setattr(
+        em_client.EastMoneyClient, "index_snapshot", lambda self, symbols: (_index_snapshot_rows(), False)
+    )
+    prov = EastMoneyProvider()
+    try:
+        records = prov.get_realtime(index_symbols=["000001.SH"])
+    finally:
+        prov.close()
+
+    assert len(records) == 4
+    idx = [r for r in records if r["symbol"] == "000001.SH"]
+    assert len(idx) == 1
+    r = idx[0]
+    assert r["name"] == "上证指数"
+    assert r["last_price"] == 3986.3
+    assert r["prev_close"] == 3952.18
+    assert r["change_pct"] == 0.0086   # 0.86% → 小数制
+    assert r["amplitude"] == 0.0151    # 1.51% → 小数制
+    assert r["volume"] == 576656606 * 100
+    assert r["session"] == "regular"
+
+
+def test_realtime_index_delayed_session(monkeypatch) -> None:
+    """指数快照降级到延时源时, 指数记录 session 同样标注 delayed。"""
+    monkeypatch.setattr(
+        em_client.EastMoneyClient, "snapshot_all", lambda self: (_snapshot_rows(), False)
+    )
+    monkeypatch.setattr(
+        em_client.EastMoneyClient, "index_snapshot", lambda self, symbols: (_index_snapshot_rows(), True)
+    )
+    prov = EastMoneyProvider()
+    try:
+        records = prov.get_realtime(index_symbols=["000001.SH"])
+    finally:
+        prov.close()
+
+    idx = [r for r in records if r["symbol"] == "000001.SH"]
+    assert idx and idx[0]["session"] == "delayed"
+
+
+def test_realtime_index_failure_keeps_stocks(monkeypatch) -> None:
+    """指数快照失败不影响股票记录返回。"""
+
+    def boom(self, symbols):
+        raise em_client.EastMoneyError("ulist 失败")
+
+    monkeypatch.setattr(
+        em_client.EastMoneyClient, "snapshot_all", lambda self: (_snapshot_rows(), False)
+    )
+    monkeypatch.setattr(em_client.EastMoneyClient, "index_snapshot", boom)
+    prov = EastMoneyProvider()
+    try:
+        records = prov.get_realtime(index_symbols=["000001.SH"])
+    finally:
+        prov.close()
+
+    assert {r["symbol"] for r in records} == {"600519.SH", "000001.SZ", "830799.BJ"}
+
+
 # ---------- instruments ----------
 
 def test_instruments_shape(monkeypatch) -> None:
@@ -473,7 +547,7 @@ def test_plugin_registered_via_loader() -> None:
 
 # ---------- 客户端降级 (主域名被风控 → push2delay) ----------
 
-def _fake_get_json_for_fallback(url: str, params: dict) -> dict:
+def _fake_get_json_for_fallback(url: str, params: dict, **_kwargs) -> dict:
     if "push2delay" in url:
         return {"data": {"total": 1, "diff": [{"f12": "600519"}]}}
     raise em_client.EastMoneyError("IP 风控")
@@ -492,7 +566,7 @@ def test_snapshot_all_falls_back_to_delay_host() -> None:
 
 
 def test_snapshot_all_normal_returns_not_delayed() -> None:
-    def fake_ok(url: str, params: dict) -> dict:
+    def fake_ok(url: str, params: dict, **_kwargs) -> dict:
         assert "push2delay" not in url
         return {"data": {"total": 1, "diff": [{"f12": "000001"}]}}
 
@@ -625,3 +699,103 @@ def test_hard_block_fails_fast_without_request(monkeypatch) -> None:
         client.close()
 
     assert len(calls) == 0  # 未发起任何 HTTP 请求
+
+
+# ---------- 快照多源轮换: 主源断连时立即切到降级源 (回归: 2026-08-31 主源被封) ----------
+
+def _snapshot_ok() -> dict:
+    return {"data": {"total": 1, "diff": [{"f12": "600519"}]}}
+
+
+def test_snapshot_page_falls_back_to_delay_host_on_conn_error(monkeypatch) -> None:
+    """主源断连时同一页立即轮换到 delay 源, 不在死源上走冷却阶梯(否则降级源永远轮不到)。"""
+    clock = _patch_clock(monkeypatch)
+    calls: list[str] = []
+
+    def fake_get(url: str, params: dict) -> _FakeResp:
+        calls.append(url)
+        if "push2delay" in url:
+            return _FakeResp(_snapshot_ok())
+        raise _conn_error()
+
+    client = em_client.EastMoneyClient(min_interval=0.0)
+    try:
+        client._client.get = fake_get
+        out = client.snapshot_page(1, 100)
+    finally:
+        client.close()
+
+    assert out == {"total": 1, "diff": [{"f12": "600519"}]}
+    assert calls == [em_client._SNAPSHOT_URLS[0], em_client._SNAPSHOT_URLS[1]]
+    assert clock["t"] < 60  # 未进入 60s 级冷却
+    assert em_client._hard_block_remaining() <= 0
+    assert em_client._conn_fail_streak == 0  # delay 源成功后断连计数清零
+
+
+def test_snapshot_delay_host_bypasses_hard_block(monkeypatch) -> None:
+    """硬封锁期降级源仍可用: 主源被封不等于降级源被封(风控按域名)。"""
+    _patch_clock(monkeypatch)
+    monkeypatch.setattr(em_client, "_blocked_until", 10.0)  # 模拟还有 10s 硬封锁
+    calls: list[str] = []
+
+    def fake_get(url: str, params: dict) -> _FakeResp:
+        calls.append(url)
+        assert "push2delay" in url
+        return _FakeResp(_snapshot_ok())
+
+    client = em_client.EastMoneyClient(min_interval=0.0)
+    try:
+        client._client.get = fake_get
+        out = client.snapshot_page(1, 100)
+    finally:
+        client.close()
+
+    assert out == {"total": 1, "diff": [{"f12": "600519"}]}
+    assert calls == [em_client._SNAPSHOT_URLS[1]]  # 主源被硬封锁跳过, 只请求降级源
+
+
+def test_get_json_default_still_retries_conn_errors(monkeypatch) -> None:
+    """fail_fast 关闭时(单源端点如 K线/F10)行为不变: 短退避重试而非立即失败。"""
+    _patch_clock(monkeypatch)
+    calls: list[int] = []
+
+    def fake_get(url: str, params: dict) -> _FakeResp:
+        calls.append(1)
+        if len(calls) <= 2:
+            raise _conn_error()
+        return _FakeResp({"ok": 1})
+
+    client = em_client.EastMoneyClient(min_interval=0.0)
+    try:
+        client._client.get = fake_get
+        assert client._get_json("https://x", {}) == {"ok": 1}
+    finally:
+        client.close()
+
+    assert len(calls) == 3  # 2 次断连(短退避) + 1 次成功
+
+
+def test_index_snapshot_falls_back_to_delay_host(monkeypatch) -> None:
+    """ulist 指数快照: 主源断连立即切到延时源, secids 由 symbol 正确映射。"""
+    _patch_clock(monkeypatch)
+    seen: list[tuple[str, dict]] = []
+
+    def fake_get(url: str, params: dict) -> _FakeResp:
+        seen.append((url, params))
+        if "push2delay" in url:
+            return _FakeResp({"data": {"total": 1, "diff": [{"f12": "000001", "f14": "上证指数"}]}})
+        raise _conn_error()
+
+    client = em_client.EastMoneyClient(min_interval=0.0)
+    try:
+        client._client.get = fake_get
+        rows, delayed = client.index_snapshot(["000001.SH", "399001.SZ"])
+    finally:
+        client.close()
+
+    assert rows == [{"f12": "000001", "f14": "上证指数"}]
+    assert delayed is True
+    assert [u for u, _ in seen] == [em_client._ULIST_URLS[0], em_client._ULIST_URLS[1]]
+    assert seen[0][1]["secids"] == "1.000001,0.399001"
+    assert em_client._hard_block_remaining() <= 0
+    assert em_client._conn_fail_streak == 0  # 延时源成功后断连计数清零

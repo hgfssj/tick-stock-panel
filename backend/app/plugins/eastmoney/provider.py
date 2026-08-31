@@ -422,7 +422,7 @@ class EastMoneyProvider:
         return pl.concat(frames, how="diagonal_relaxed") if frames else pl.DataFrame()
 
     # ================= realtime =================
-    def get_realtime(self) -> list[dict]:
+    def get_realtime(self, index_symbols: list[str] | None = None) -> list[dict]:
         logger.info("eastmoney realtime 拉取开始(全市场快照)")
         try:
             rows, delayed = self._client.snapshot_all()
@@ -457,6 +457,39 @@ class EastMoneyProvider:
                 "timestamp": fetched_ms,
                 "session": "delayed" if delayed else "regular",
             })
+
+        if index_symbols:
+            try:
+                index_rows, idx_delayed = self._client.index_snapshot(index_symbols)
+            except Exception as e:
+                logger.warning("eastmoney 指数快照拉取失败: %s", e)
+            else:
+                if idx_delayed:
+                    logger.warning("eastmoney 指数快照已降级为延时行情源(push2delay)")
+                sym_by_code = {s.split(".")[0]: s for s in index_symbols if "." in s}
+                for r in index_rows:
+                    code = str(r.get("f12") or "")
+                    symbol = sym_by_code.get(code)
+                    if not symbol:
+                        continue
+                    vol = _fnum(r.get("f5"))
+                    records.append({
+                        "symbol": symbol,
+                        "name": r.get("f14"),
+                        "last_price": _fnum(r.get("f2")),
+                        "prev_close": _fnum(r.get("f18")),
+                        "open": _fnum(r.get("f17")),
+                        "high": _fnum(r.get("f15")),
+                        "low": _fnum(r.get("f16")),
+                        "volume": None if vol is None else vol * 100,
+                        "amount": _fnum(r.get("f6")),
+                        "change_pct": _pct_to_decimal(r.get("f3")),
+                        "change_amount": _fnum(r.get("f4")),
+                        "amplitude": _pct_to_decimal(r.get("f7")),
+                        "turnover_rate": _pct_to_decimal(r.get("f8")),
+                        "timestamp": fetched_ms,
+                        "session": "delayed" if delayed or idx_delayed else "regular",
+                    })
         logger.info("eastmoney realtime: %d 只标的", len(records))
         return records
 

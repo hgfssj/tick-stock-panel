@@ -239,13 +239,18 @@ class QuoteService:
         logger.info("行情服务已启动, 轮询间隔 %.1fs", self._interval)
 
     def stop(self) -> None:
-        """停止后台行情轮询线程。"""
+        """停止后台行情轮询线程。
+
+        只停线程、不持久化开关: lifespan shutdown 同样走这里,
+        若在此写偏好, uvicorn --reload 热重载会把用户开启的
+        realtime_quotes_enabled 静默洗成 False, 重启后服务不再启动。
+        持久化用户意图只发生在 enable()/disable()。
+        """
         self._running = False
         self._enabled = False
         if self._thread:
             self._thread.join(timeout=10)
             self._thread = None
-        self._save_enabled(False)
         logger.info("行情服务已停止")
 
     def enable(self) -> bool:
@@ -271,6 +276,7 @@ class QuoteService:
     def disable(self) -> None:
         """关闭自动行情。"""
         self.stop()
+        self._save_enabled(False)
         logger.info("行情服务已关闭")
 
     # ================================================================
@@ -572,6 +578,25 @@ class QuoteService:
                 self._fetch_full_market_quotes()
             return self._fetched_at > before
 
+    def _collect_index_universe(self) -> tuple[set[str], set[str]]:
+        """实时轮询需覆盖的指数标的。返回 (全集, 监控规则子集)。
+
+        全集 = 指数维表 ∪ 核心指数 ∪ 指数监控规则标的;
+        监控子集供 mode=core 路径显式拉取使用。
+        """
+        from app.services import preferences
+        all_syms = set(self._repo.get_index_symbol_set()) if self._repo else set()
+        core = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
+        all_syms.update(core)
+        monitor: set[str] = set()
+        engine = getattr(self._app_state, "monitor_engine", None) if self._app_state else None
+        if engine:
+            for _r in list(engine.rules.values()):
+                if _r.get("enabled", True) and _r.get("asset_type") == "index" and _r.get("scope") == "symbols":
+                    monitor.update(s for s in _r.get("symbols", []) if s)
+        all_syms.update(monitor)
+        return all_syms, monitor
+
     def _fetch_full_market_quotes(self) -> None:
         """拉取全市场行情 → 写 daily + 计算 enriched + 更新缓存。"""
         from app.services import preferences
@@ -583,7 +608,17 @@ class QuoteService:
                 try:
                     t0 = time.perf_counter()
                     now_ts = time.perf_counter()
-                    records = custom_sources.get_provider(provider_name).get_realtime()
+                    provider = custom_sources.get_provider(provider_name)
+                    if provider_name == "eastmoney" and preferences.get_realtime_pull_index():
+                        all_index_symbols, monitor_index_symbols = self._collect_index_universe()
+                        if preferences.get_realtime_index_mode() == "all":
+                            index_symbols = sorted(all_index_symbols)
+                        else:
+                            core = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
+                            index_symbols = sorted(core | monitor_index_symbols)
+                        records = provider.get_realtime(index_symbols=index_symbols or None)
+                    else:
+                        records = provider.get_realtime()
                 except Exception as e:  # noqa: BLE001
                     logger.warning("自定义实时行情拉取失败: %s", e)
                     return
@@ -602,17 +637,8 @@ class QuoteService:
 
         try:
             from app.services import preferences
-            all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
+            all_index_symbols, monitor_index_symbols = self._collect_index_universe()
             core_index_symbols = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
-            all_index_symbols.update(core_index_symbols)
-            # 指数监控规则标的并入轮询 (mode=core 时 quotes.get 显式拉取覆盖; mode=all 被 CN_Index 全覆盖)
-            monitor_index_symbols: set[str] = set()
-            engine = getattr(self._app_state, "monitor_engine", None) if self._app_state else None
-            if engine:
-                for _r in list(engine.rules.values()):
-                    if _r.get("enabled", True) and _r.get("asset_type") == "index" and _r.get("scope") == "symbols":
-                        monitor_index_symbols.update(s for s in _r.get("symbols", []) if s)
-            all_index_symbols.update(monitor_index_symbols)
             all_etf_symbols = set()
             if self._repo:
                 etf_inst = self._repo.get_etf_instruments()
