@@ -201,6 +201,28 @@ PORT=3018                      # 服务端口
 
 ---
 
+## 🔄 多机数据同步(GitHub 中转)
+
+`data/` 下的行情 Parquet 与用户配置已纳入 Git 追踪(日志/锁/密钥/缓存除外),GitHub 仓库即数据中转通道——**clone 即带全部历史数据**,无需重新同步。
+
+**自动同步**(应用内):
+
+- 后端启动后约 6 秒自动 `pull` 增量(失败仅告警,不阻塞启动)
+- 盘后管道(定时或手动)成功后自动 `commit + push` 增量
+- 手动触发:`POST /api/system/sync?action=push|pull|status` 或 `./scripts/sync-data.sh pull|push|status`
+
+**每台新机器的一次性配置**(自动 push 的 commit 需要 git 身份):
+
+```bash
+git config user.name "your-name"
+git config user.email "your@email.com"
+git push  # 首次手动 push 一次, 让 macOS keychain 缓存 HTTPS 凭证
+```
+
+> 冲突策略:两台机器写同一交易日分区时,二进制无法合并,pull 保留本地数据并告警,用 `scripts/sync-data.sh status` 查看、手动处理。
+
+---
+
 ## 🏗️ 技术栈
 
 | 层           | 选型                                                                                              |
