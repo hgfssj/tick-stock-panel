@@ -769,10 +769,9 @@ class QuoteService:
             self._flush_live_enriched(daily_df, quote_extra, asset_type="stock")
         if not etf_daily_df.is_empty() and self._repo:
             self._flush_live_enriched(etf_daily_df, etf_quote_extra, asset_type="etf")
-        # ---- 指数: 仅有指数监控规则时才写盘 (无规则零成本) ----
+        # ---- 指数: 实时拉取指数时即写盘 (指数菜单日K读 kline_index_daily, 不依赖监控规则) ----
         # mode=all (完整 CN_Index universe) → flush 覆盖; mode=core (部分标的) → merge 不截断分区
-        engine = getattr(self._app_state, "monitor_engine", None) if self._app_state else None
-        if engine and engine.has_asset_rules("index") and self._repo:
+        if index_records and self._repo and preferences.get_realtime_pull_index():
             index_daily_df = self._build_daily(index_records)
             if not index_daily_df.is_empty():
                 use_flush = preferences.get_realtime_index_mode() == "all"
