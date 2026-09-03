@@ -6,6 +6,6 @@
   "financial_data_provider": "eastmoney",
   "onboarding_completed": true,
   "realtime_quotes_enabled": true,
-  "last_fetch_ms": 1788401665758.0,
+  "last_fetch_ms": 1788404501559.0,
   "realtime_quote_interval": 60.0
 }
