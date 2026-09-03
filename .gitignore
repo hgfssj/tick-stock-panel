@@ -43,13 +43,51 @@ backend/app/static/
 # ===== Project data (Parquet/DuckDB) =====
 backend/data/**
 !backend/data/.gitkeep
-data/**
-!data/.gitkeep
-# data/ 下所有内容(含 ext_data 概念/行业)均不入库:
-#   - 用户运行时数据 (K线/财务/自选/回测等) 本就不该进 git
-#   - 概念/行业改为「首次启动自动从远程接口拉取」(见 app/services/ext_presets.py)
-#     作者更新数据只需改接口 JSON, 用户下次拉取自动同步, 无需发版、无需碰 git。
-# 这样 git pull 物理上无法影响用户本地 data, 杜绝「更新后数据丢失」。
+
+# data/ 同步白名单: Parquet行情数据 + 用户配置
+# 排除: 日志/锁/缓存/密钥/临时文件/机器特定数据
+
+# --- 运行时日志 ---
+data/backend.log
+data/uvicorn.out
+
+# --- 进程锁文件 (跨机无意义) ---
+data/.matrix_generation_*.lock
+data/.mining_process.lock
+
+# --- 机器特定生成标记 (含 owner_pid) ---
+data/.matrix_generation_*.json
+
+# --- 运行时缓存 ---
+data/.backtest_matrix_cache/
+data/ai_cache/
+data/backtest_results/
+data/screener_results/
+data/pools/
+data/research/
+data/depth5/
+data/data_sources/
+
+# --- 机器特定数据 ---
+data/capabilities.json
+data/job_store/
+
+# --- 密钥与认证 (安全) ---
+data/user_data/secrets.json
+data/user_data/auth.json
+
+# --- 空/低频子目录 (暂不同步，有数据后需从 gitignore 移除) ---
+data/adj_factor/
+data/adj_factor_etf/
+data/kline_etf_daily/
+data/kline_etf_enriched/
+data/kline_etf_minute/
+data/kline_minute/
+data/kline_ext/
+data/financials/
+data/ext_data/
+data/instruments_ext/
+data/instruments_etf/
 
 # ===== Secrets =====
 .env

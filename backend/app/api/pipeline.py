@@ -69,6 +69,15 @@ async def run_now(request: Request) -> dict:
             job_store.succeed(job_id, result)
             invalidate_storage_cache()
             repo.refresh_cache()  # 刷新 Polars 缓存
+
+            # 数据同步: 手动管道成功后 push
+            try:
+                from app.services.data_sync import push_after_pipeline
+                from app.config import settings
+
+                push_after_pipeline(settings.data_dir)
+            except Exception:
+                logger.exception("data sync push failed after manual pipeline")
         except JobCancelledError:
             # 已被 reap/手动取消终止: job 状态已由 terminate() 写为 failed,
             # 拉取线程在分块回调处自行退出, 这里无需(也无法)再写状态。

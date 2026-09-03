@@ -186,6 +186,16 @@ async def _application_lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("integrity boot check scheduling failed: %s", e)
 
+    # 数据同步: 启动后延迟 pull, 不阻塞服务启动
+    try:
+        from app.services.data_sync import pull_on_startup
+
+        _sync_timer = threading.Timer(3.0, pull_on_startup, args=(settings.data_dir,))
+        _sync_timer.daemon = True
+        _sync_timer.start()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("data sync pull scheduling failed: %s", e)
+
     # 企业微信智能机器人长连接(可选通道, 失败不阻断启动)
     try:
         from app.services.wecom_bot_service import WecomBotService

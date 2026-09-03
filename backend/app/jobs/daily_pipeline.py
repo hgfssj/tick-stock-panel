@@ -786,6 +786,15 @@ def _scheduled_pipeline_task(pipeline_fn) -> None:
     """Run weekly mining only after the tracked daily pipeline has fully succeeded."""
     if not _run_tracked(pipeline_fn, "daily_pipeline"):
         return
+
+    # 数据同步: 管道成功后 push 到 GitHub
+    try:
+        from app.services.data_sync import push_after_pipeline
+
+        push_after_pipeline(settings.data_dir)
+    except Exception:
+        logger.exception("data sync push failed after scheduled pipeline")
+
     try:
         from app.services.mining_schedule import run_weekly_mining
 
