@@ -2278,6 +2278,9 @@ class KlineRepository:
         """覆写当天指定资产 enriched 分区 (实时 enriched 落盘, 非merge)。"""
         if df.is_empty() or "date" not in df.columns:
             return
+        # 最终防线: 任何来源的重复 symbol 都不允许进入磁盘和内存缓存
+        # (曾因上游 join 重复行导致看板涨/平/跌计数指数膨胀)
+        df = df.unique(subset=["symbol"], keep="last")
         dt = df["date"][0]
         cache_df = self._with_instrument_metadata(asset_type, df).sort(["symbol"])
         if asset_type == "stock":

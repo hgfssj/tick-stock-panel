@@ -1863,17 +1863,21 @@ def compute_enriched_today(
 
     # ---- 信号 (需要昨天的指标值判断交叉) ----
     if not prev_enriched.is_empty():
-        sig_prev = prev_enriched.select(
-            "symbol",
-            pl.col("ma5").alias("_prev_ma5"),
-            pl.col("ma10").alias("_prev_ma10"),
-            pl.col("ma20").alias("_prev_ma20"),
-            pl.col("ma60").alias("_prev_ma60"),
-            pl.col("macd_dif").alias("_prev_dif"),
-            pl.col("macd_dea").alias("_prev_dea"),
-            pl.col("boll_upper").alias("_prev_boll_upper"),
-            pl.col("boll_lower").alias("_prev_boll_lower"),
-            pl.col("close").alias("_prev_close_enriched"),
+        sig_prev = (
+            prev_enriched.select(
+                "symbol",
+                pl.col("ma5").alias("_prev_ma5"),
+                pl.col("ma10").alias("_prev_ma10"),
+                pl.col("ma20").alias("_prev_ma20"),
+                pl.col("ma60").alias("_prev_ma60"),
+                pl.col("macd_dif").alias("_prev_dif"),
+                pl.col("macd_dea").alias("_prev_dea"),
+                pl.col("boll_upper").alias("_prev_boll_upper"),
+                pl.col("boll_lower").alias("_prev_boll_lower"),
+                pl.col("close").alias("_prev_close_enriched"),
+            )
+            # 缓存帧可能残留重复 symbol (join 放大自反馈环), join 前强制去重
+            .unique(subset=["symbol"], keep="last")
         )
         df = df.join(sig_prev, on="symbol", how="left")
 

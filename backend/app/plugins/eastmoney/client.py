@@ -315,7 +315,14 @@ class EastMoneyClient:
         for pn in range(2, pages + 1):
             page = self.snapshot_page(pn, page_size)
             rows.extend(page.get("diff") or [])
-        return rows, self._snapshot_host_idx == _DELAY_HOST_IDX
+        # 风控降级时页间主机可能切换, 同一标的机会出现在多页 (后页覆盖);
+        # 去重防止重复 symbol 流入行情/维表, 引发 enriched join 行数指数膨胀。
+        deduped: dict[str, dict] = {}
+        for r in rows:
+            code = str(r.get("f12") or "")
+            if code:
+                deduped[code] = r
+        return list(deduped.values()), self._snapshot_host_idx == _DELAY_HOST_IDX
 
     def index_snapshot(self, symbols: list[str]) -> tuple[list[dict], bool]:
         """多标的实时快照(指数等非股票类)。返回 (rows, delayed)。
