@@ -41,7 +41,7 @@ pull() {
         echo "Merge conflict detected. Resolving data/ with local (ours)..."
         git checkout --ours -- data/
         git add data/
-        git commit "${GIT_ID_ARGS[@]}" -m "sync: merge data/ (keep local)" || true
+        git "${GIT_ID_ARGS[@]}" commit -m "sync: merge data/ (keep local)" || true
         echo "Conflict resolved: data/ kept local version."
     fi
 }
@@ -56,7 +56,7 @@ push() {
     fi
 
     TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    git commit "${GIT_ID_ARGS[@]}" -m "sync: data update $TS" || true
+    git "${GIT_ID_ARGS[@]}" commit -m "sync: data update $TS" || true
 
     if git push origin main; then
         echo "Push succeeded."
