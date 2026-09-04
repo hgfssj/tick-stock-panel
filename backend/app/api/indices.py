@@ -87,6 +87,11 @@ def get_index_daily(
     if not df.is_empty():
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": df.to_dicts(), "source": "index_enriched"}
 
+    # 合成指数 (本地计算生成) 无外部行情源, 缺失时不回落实时拉取
+    from app.services.median_index import MEDIAN_SYMBOL
+    if symbol == MEDIAN_SYMBOL:
+        return {"symbol": symbol, "name": info.get("name") or MEDIAN_SYMBOL, "index_info": info, "rows": [], "source": "local"}
+
     capset = request.app.state.capabilities
     if not capset.has(Cap.KLINE_DAILY_BATCH):
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}

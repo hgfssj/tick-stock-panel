@@ -55,6 +55,7 @@ function fmtNum(v: number | null | undefined, digits = 2) {
 }
 
 const PINNED_INDEXES = [
+  { symbol: 'MEDIAN.XX', name: '中位数指数' },
   { symbol: '000001.SH', name: '上证指数' },
   { symbol: '399001.SZ', name: '深证成指' },
   { symbol: '399006.SZ', name: '创业板指' },

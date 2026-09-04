@@ -49,6 +49,7 @@ backend/data/**
 
 # --- 运行时日志 ---
 data/backend.log
+data/backend.log.*
 data/uvicorn.out
 
 # --- 进程锁文件 (跨机无意义) ---

@@ -787,6 +787,15 @@ def _scheduled_pipeline_task(pipeline_fn) -> None:
     if not _run_tracked(pipeline_fn, "daily_pipeline"):
         return
 
+    # 中位数指数: 盘后追加当日行 (纯本地计算, 失败不影响管道结果)
+    try:
+        from app.market_time import cn_today
+        from app.services import median_index
+
+        median_index.update_today(_get_app_state().repo, cn_today())
+    except Exception:
+        logger.exception("median index update failed after scheduled pipeline")
+
     # 数据同步: 管道成功后 push 到 GitHub
     try:
         from app.services.data_sync import push_after_pipeline
